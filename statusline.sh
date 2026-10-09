@@ -1,6 +1,44 @@
 #!/usr/bin/env bash
 input=$(cat)
 
+# Configuración: ~/.claude/statusline.conf, con líneas clave=valor (la escribe install.sh). Las variables
+# CLAUDE_STATUSLINE_<CLAVE> tienen prioridad y lo que falte sale del preset. El archivo nunca se ejecuta:
+# solo se leen claves conocidas con letras, números y comas
+conf="${CLAUDE_STATUSLINE_CONFIG:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/statusline.conf}"
+cfg_preset=""; cfg_icons=""; cfg_style=""; cfg_layout=""; cfg_segments=""; cfg_bar=""; cfg_colors=""; cfg_gap=""
+if [ -f "$conf" ]; then
+  while IFS='=' read -r key value || [ -n "$key" ]; do
+    case "$key" in
+      preset|icons|style|layout|segments|bar|colors|gap)
+        value=$(printf '%s' "$value" | tr -cd 'a-z0-9,'); eval "cfg_$key=\$value" ;;
+    esac
+  done < "$conf"
+fi
+for key in preset icons style layout segments bar colors gap; do
+  eval "value=\${CLAUDE_STATUSLINE_$(echo "$key" | tr '[:lower:]' '[:upper:]'):-}"
+  [ -n "$value" ] && value=$(printf '%s' "$value" | tr -cd 'a-z0-9,') && eval "cfg_$key=\$value"
+done
+all_segments="project,rename,branch,pr,model,effort,context,today,week,time,lines,cost,cache"
+case "$cfg_preset" in
+  classic) defaults="nerd flat compact project,model,context,today,week shade vivid none" ;;
+  *)       defaults="nerd round full $all_segments shade vivid line" ;;
+esac
+read -r d_icons d_style d_layout d_segments d_bar d_colors d_gap <<< "$defaults"
+case "$cfg_icons"  in nerd|none) ;; *) cfg_icons=$d_icons ;; esac
+case "$cfg_style"  in round|angled|flat) ;; *) cfg_style=$d_style ;; esac
+case "$cfg_layout" in full|compact) ;; *) cfg_layout=$d_layout ;; esac
+case "$cfg_bar"    in shade|line|block|none) ;; *) cfg_bar=$d_bar ;; esac
+case "$cfg_colors" in vivid|soft) ;; *) cfg_colors=$d_colors ;; esac
+case "$cfg_gap"    in line|none) ;; *) cfg_gap=$d_gap ;; esac
+[ -z "$cfg_segments" ] && cfg_segments=$d_segments
+[ "$cfg_segments" = all ] && cfg_segments=$all_segments
+# sin Nerd Font no hay puntas de powerline
+[ "$cfg_icons" = none ] && cfg_style=flat
+show() { case ",$cfg_segments," in *",$1,"*) return 0 ;; esac; return 1; }
+# icono seguido de un espacio, o nada sin Nerd Font
+ic() { [ "$cfg_icons" = nerd ] && printf '%s ' "$1"; }
+nerd() { [ "$cfg_icons" = nerd ]; }
+
 val() { echo "$input" | grep -o "\"$1\":[^,}]*" | head -1 | sed 's/.*://;s/"//g;s/^ *//'; }
 nested() { echo "$input" | grep -o "\"$1\":{[^}]*}" | head -1 | grep -o "\"$2\":[^,}]*" | head -1 | sed 's/.*://;s/"//g;s/^ *//'; }
 # like nested(), but tolerates one level of sub-objects inside the target object
@@ -30,7 +68,7 @@ if [ -n "$git_worktree" ] || [ -n "$(nested worktree path)" ]; then
     conflicts=$(echo "$git_status" | grep -c '^u ')
     untracked=$(echo "$git_status" | grep -c '^? ')
     # mismos símbolos que el segmento vcs de p10k
-    vcs=" ${branch}"
+    vcs="$(ic )${branch}"
     [ "${behind:-0}" -gt 0 ] && vcs="${vcs} ⇣${behind}"
     [ "${ahead:-0}" -gt 0 ] && vcs="${vcs} ⇡${ahead}"
     [ "$conflicts" -gt 0 ] && vcs="${vcs} ~${conflicts}"
@@ -108,6 +146,27 @@ time_left() {
 session_time=$(time_left "$session_reset")
 week_time=$(time_left "$week_reset")
 
+# segmentos ocultos por la configuración
+show project || project=""
+show rename  || rename_hint=""
+show branch  || vcs=""
+show model   || model=""
+show effort  || effort=""
+show context || ctx_pct=""
+show today   || session_pct=""
+show week    || week_pct=""
+show time    || duration_ms=""
+show lines   || { lines_added=""; lines_removed=""; }
+show cost    || cost_usd=""
+show cache   || cache_warm=""
+
+# caracteres de las barras de uso
+case "$cfg_bar" in
+  line)  bar_fill="━"; bar_empty="─" ;;
+  block) bar_fill="■"; bar_empty="□" ;;
+  *)     bar_fill="▒"; bar_empty="░" ;;
+esac
+
 make_bar() {
   local pct=${1:-0} width=${2:-8}
   local filled_8ths=$(awk -v p="$pct" -v w="$width" 'BEGIN{ v=int((p/100)*w*8+0.5); if(v>w*8)v=w*8; if(v<0)v=0; print v }')
@@ -115,12 +174,12 @@ make_bar() {
   local frac=$((filled_8ths % 8))
   local bar="" i
   local parts=(" " "▏" "▎" "▍" "▌" "▋" "▊" "▉")
-  for ((i=0; i<full && i<width; i++)); do bar="${bar}▒"; done
+  for ((i=0; i<full && i<width; i++)); do bar="${bar}${bar_fill}"; done
   if [ "$full" -lt "$width" ] && [ "$frac" -gt 0 ]; then
-    bar="${bar}▒"
+    bar="${bar}${bar_fill}"
     full=$((full + 1))
   fi
-  for ((i=full; i<width; i++)); do bar="${bar}░"; done
+  for ((i=full; i<width; i++)); do bar="${bar}${bar_empty}"; done
   echo "$bar"
 }
 
@@ -128,13 +187,29 @@ make_bar() {
 R="\033[0m"
 bgc() { printf '\033[48;5;%sm' "$1"; }
 fgc() { printf '\033[38;5;%sm' "$1"; }
+# colores de estado: vivos (verde, amarillo y rojo básicos) o suaves
+tone() {
+  if [ "$cfg_colors" = soft ]; then
+    case "$1" in 1) echo 167 ;; 2) echo 108 ;; 3) echo 179 ;; 28) echo 65 ;; 124) echo 131 ;; 29) echo 66 ;; *) echo "$1" ;; esac
+  else
+    echo "$1"
+  fi
+}
+
+# puntas y separadores de las píldoras: redondeados, en ángulo o planos
+case "$cfg_style" in
+  angled) cap_l=""; sep_same=""; sep_diff=""; cap_r=""; cap_w=1 ;;
+  flat)   cap_l="";  sep_same="";  sep_diff="";  cap_r="";  cap_w=0 ;;
+  *)      cap_l=""; sep_same=""; sep_diff=""; cap_r=""; cap_w=1 ;;
+esac
+gap_char="─"; [ "$cfg_gap" = none ] && gap_char=" "
 
 # color de fondo según el % de uso: verde, amarillo o rojo (como vcs/status en p10k)
 level_bg() {
   local p=${1:-0}
-  if [ "$p" -ge 80 ] 2>/dev/null; then echo 1
-  elif [ "$p" -ge 60 ] 2>/dev/null; then echo 3
-  else echo 2
+  if [ "$p" -ge 80 ] 2>/dev/null; then tone 1
+  elif [ "$p" -ge 60 ] 2>/dev/null; then tone 3
+  else tone 2
   fi
 }
 
@@ -151,31 +226,31 @@ render_chain() {
   local count=${#seg_bg[@]} i txt
   chain=""; chain_w=0
   [ "$count" -eq 0 ] && return
-  chain="$(fgc "${seg_bg[0]}")"
-  chain_w=2
+  chain="$(fgc "${seg_bg[0]}")${cap_l}"
+  chain_w=$((2 * cap_w))
   for ((i=0; i<count; i++)); do
     txt=" ${seg_txt[i]} "
     chain="${chain}$(bgc "${seg_bg[i]}")$(fgc "${seg_fg[i]}")${txt}"
     chain_w=$((chain_w + $(text_width "$txt")))
     if [ $((i + 1)) -lt "$count" ]; then
       if [ "${seg_bg[i+1]}" = "${seg_bg[i]}" ]; then
-        chain="${chain}$(fgc "${seg_fg[i]}")"
+        chain="${chain}$(fgc "${seg_fg[i]}")${sep_same}"
       else
-        chain="${chain}$(bgc "${seg_bg[i+1]}")$(fgc "${seg_bg[i]}")"
+        chain="${chain}$(bgc "${seg_bg[i+1]}")$(fgc "${seg_bg[i]}")${sep_diff}"
       fi
-      chain_w=$((chain_w + 1))
+      chain_w=$((chain_w + cap_w))
     fi
   done
-  chain="${chain}${R}$(fgc "${seg_bg[count-1]}")${R}"
+  chain="${chain}${R}$(fgc "${seg_bg[count-1]}")${cap_r}${R}"
   seg_bg=(); seg_fg=(); seg_txt=()
 }
 
 # segmento con barra: "Nombre ▒░░░░░░░ N%" y tiempo hasta el reset con el reloj de arena de p10k
 bar_seg() {
   local pct="$1" name="$2" time="$3" width="$4"
-  local bar; bar=$(make_bar "$pct" "$width")
-  local clock=""; [ -n "$time" ] && clock="  ${time}"
-  seg "$(level_bg "$pct")" 0 "${name} ${bar} ${pct}%${clock}"
+  local bar=""; [ "$cfg_bar" != none ] && bar="$(make_bar "$pct" "$width") "
+  local clock=""; [ -n "$time" ] && clock=" $(ic )${time}"
+  seg "$(level_bg "$pct")" 0 "${name} ${bar}${pct}%${clock}"
 }
 
 # ancho de la terminal (Claude Code lo pasa en COLUMNS). Claude Code sangra el statusline y recorta con … lo que
@@ -201,21 +276,22 @@ if [ -n "$lines_added" ] || [ -n "$lines_removed" ]; then
   red=$((bar_w - green))
   # texto centrado en cada tramo; sin cambios, los dos tramos en gris
   center() { local t="$1" w="$2" l; l=$(text_width "$t"); local p=$((w - l)); printf '%*s%s%*s' $((p / 2)) '' "$t" $((p - p / 2)) ''; }
-  add_bg=28; del_bg=124; [ $((la + lr)) -eq 0 ] && add_bg=240 && del_bg=240
+  add_bg=$(tone 28); del_bg=$(tone 124); [ $((la + lr)) -eq 0 ] && add_bg=240 && del_bg=240
   diff_bar="$(bgc "$add_bg")$(fgc 254)$(center "$add_txt" "$green")$(bgc "$del_bg")$(center "$del_txt" "$red")$(bgc 238)$(fgc 254)"
   # archivos con cambios en el repo (git status, incluye los sin seguimiento)
   files=$(git --no-optional-locks -C "$dir" status --porcelain 2>/dev/null | wc -l | tr -d ' ')
   files_txt=""
   if [ "${files:-0}" -gt 0 ]; then
-    files_txt="${files} "
+    files_txt="${files} files"; nerd && files_txt="${files} "
   fi
   lines_txt="Lines ${diff_bar}"
 fi
 # ancho de la píldora: puntas, márgenes y, si hay archivos, el separador y el segundo tramo
 lines_w=0
 if [ -n "$lines_txt" ]; then
-  lines_w=$((4 + $(text_width "$lines_txt") + 4))   # + el tramo del icono (separador, icono y márgenes)
-  [ -n "$files_txt" ] && lines_w=$((lines_w + 3 + $(text_width "$files_txt")))
+  lines_w=$((2 * cap_w + $(text_width "$lines_txt") + 2))
+  nerd && lines_w=$((lines_w + 3 + cap_w))   # el tramo del icono: separador, icono y márgenes
+  [ -n "$files_txt" ] && lines_w=$((lines_w + cap_w + 2 + $(text_width "$files_txt")))
 fi
 
 # línea 2: cada uso va en su propia píldora. Se guardan aparte para repartirlas al final: si una no cabe en el
@@ -246,16 +322,16 @@ if [ -n "$cost_usd" ] || [ -n "$duration_ms" ] || [ -n "$lines_added" ] || [ -n 
   line3_row=$rows
   # duración: icono en azul petróleo y valor en un azul más claro
   if [ -n "$duration_ms" ]; then
-    seg 24 254 "󰔛"
+    nerd && seg 24 254 "󰔛"
     seg 31 254 "Time $(format_duration "$duration_ms")"
     add_pill
   fi
   if [ -n "$lines_txt" ]; then
     # mismo ancho que la píldora de Today (encima, en la misma columna): se rellena con espacios a ambos lados
-    pad=$((today_w - lines_w))
+    pad=$((today_w - lines_w)); [ "$cfg_layout" = compact ] && pad=0
     [ "$pad" -gt 0 ] && lines_txt="$(printf '%*s' $((pad / 2)) '')${lines_txt}$(printf '%*s' $((pad - pad / 2)) '')"
     # tres tonos de gris, del más oscuro al más claro: icono, líneas y archivos (como manzana, Time o Cost)
-    seg 236 254 ""
+    nerd && seg 236 254 ""
     seg 238 254 "$lines_txt"
     [ -n "$files_txt" ] && seg 250 232 "$files_txt"
     add_pill
@@ -264,15 +340,16 @@ if [ -n "$cost_usd" ] || [ -n "$duration_ms" ] || [ -n "$lines_added" ] || [ -n 
   # ciruela oscuro y claro; la caché en verde azulado si sigue activa o gris con copo de nieve si se enfrió
   if [ -n "$cost_usd" ] || [ -n "$cache_warm" ]; then
     if [ -n "$cost_usd" ]; then
-      seg 53 254 "󰖄"
+      nerd && seg 53 254 "󰖄"
       seg 90 254 "Cost \$$(printf '%.2f' "$cost_usd")"
     fi
     if [ -n "$cache_warm" ]; then
       cache_pct="—"; [ -n "$cache_ratio" ] && [ "$cache_ratio" != "null" ] && cache_pct="$(awk -v r="$cache_ratio" 'BEGIN{printf "%.0f", r*100}')%"
       if [ "$cache_warm" = "true" ]; then
-        seg 29 254 "󰆼 Cache ${cache_pct}"
+        seg "$(tone 29)" 254 "$(ic 󰆼)Cache ${cache_pct}"
       else
-        seg 240 254 "󰆼 Cache ${cache_pct} 󰜗"
+        cold=" cold"; nerd && cold=" 󰜗"
+        seg 240 254 "$(ic 󰆼)Cache ${cache_pct}${cold}"
       fi
     fi
     add_pill
@@ -281,11 +358,12 @@ fi
 
 # PR abierto de la rama (pr.number, pr.review_state); en GitLab es un MR y se escribe !N
 pr_number=$(nested pr number)
+show pr || pr_number=""
 pr_state=$(nested pr review_state)
 pr=""; pr_bg=4; pr_fg=254
 if [ -n "$pr_number" ]; then
   pr_prefix="#"; [ "$(nested pr kind)" = "mr" ] && pr_prefix="!"
-  pr=" ${pr_prefix}${pr_number}"
+  pr="$(ic )${pr_prefix}${pr_number}"
   # verde aprobado, amarillo claro pendiente (distinto del amarillo de la rama), rojo con cambios pedidos, gris borrador
   case "$pr_state" in
     approved)          pr="${pr} ✔"; pr_bg=2; pr_fg=0 ;;
@@ -296,22 +374,24 @@ if [ -n "$pr_number" ]; then
 fi
 
 # línea 1: Apple y proyecto (os_icon + dir) ─── modelo, como el gap de p10k
-seg 253 232 ""
-[ -n "$project" ] && seg 4 254 " ${project}"
-[ -n "$rename_hint" ] && seg 172 0 "󰏫" && seg 214 0 "$rename_hint"
-[ -n "$vcs" ]     && seg "$vcs_bg" 0 "$vcs"
-[ -n "$pr" ]      && seg "$pr_bg" "$pr_fg" "$pr"
+[ -n "$project" ] && nerd && seg 253 232 ""
+[ -n "$project" ] && seg 4 254 "$(ic )${project}"
+[ -n "$rename_hint" ] && nerd && seg 172 0 "󰏫"
+[ -n "$rename_hint" ] && seg 214 0 "$rename_hint"
+[ -n "$vcs" ]     && seg "$(tone "$vcs_bg")" 0 "$vcs"
+[ -n "$pr" ]      && seg "$(tone "$pr_bg")" "$pr_fg" "$pr"
 render_chain
 left="$chain"; left_w=$chain_w
 # si la rama y el PR no caben junto al proyecto, van en su propia línea
 if { [ -n "$vcs" ] || [ -n "$pr" ]; } && [ "$term_w" -gt 0 ] && [ "$left_w" -gt "$term_w" ]; then
-  seg 253 232 ""
-  [ -n "$project" ] && seg 4 254 " ${project}"
-  [ -n "$rename_hint" ] && seg 172 0 "󰏫" && seg 214 0 "$rename_hint"
+  [ -n "$project" ] && nerd && seg 253 232 ""
+  [ -n "$project" ] && seg 4 254 "$(ic )${project}"
+  [ -n "$rename_hint" ] && nerd && seg 172 0 "󰏫"
+  [ -n "$rename_hint" ] && seg 214 0 "$rename_hint"
   render_chain
   left="$chain"; left_w=$chain_w
-  [ -n "$vcs" ] && seg "$vcs_bg" 0 "$vcs"
-  [ -n "$pr" ]  && seg "$pr_bg" "$pr_fg" "$pr"
+  [ -n "$vcs" ] && seg "$(tone "$vcs_bg")" 0 "$vcs"
+  [ -n "$pr" ]  && seg "$(tone "$pr_bg")" "$pr_fg" "$pr"
   render_chain
   left="${left}\n${chain}"; left_w=$chain_w
 fi
@@ -328,15 +408,32 @@ model_colors() {
 }
 if [ -n "$model" ]; then
   read -r model_bg model_fg effort_bg <<< "$(model_colors)"
-  model_txt="󰧑 ${model}"
+  model_txt="$(ic 󰧑)${model}"
   # rayo cuando el modo rápido está activo
-  [ "$fast_mode" = "true" ] && model_txt="${model_txt} 󱐋"
+  fast=" fast"; nerd && fast=" 󱐋"
+  [ "$fast_mode" = "true" ] && model_txt="${model_txt}${fast}"
   seg "$model_bg" "$model_fg" "$model_txt"
   # effort pegado al modelo, en un tono más claro del mismo color
-  [ -n "$effort" ] && seg "$effort_bg" "$model_fg" "󰓅 ${effort}"
+  [ -n "$effort" ] && seg "$effort_bg" "$model_fg" "$(ic 󰓅)${effort}"
 fi
 render_chain
 right="$chain"; right_w=$chain_w
+
+# diseño compacto: todas las píldoras seguidas en una línea, separadas por un espacio; bajan de fila si no caben
+if [ "$cfg_layout" = compact ]; then
+  all_c=("$left" "$right" "${pill_chain[@]}"); all_w=("$left_w" "$right_w" "${pill_w[@]}")
+  line=""; line_w=0; out="​"
+  for ((i=0; i<${#all_c[@]}; i++)); do
+    [ -z "${all_c[i]}" ] && continue
+    if [ "$line_w" -gt 0 ] && [ "$term_w" -gt 0 ] && [ $((line_w + 1 + all_w[i])) -gt "$term_w" ]; then
+      out="${out}\n${line}"; line=""; line_w=0
+    fi
+    [ "$line_w" -gt 0 ] && line="${line} " && line_w=$((line_w + 1))
+    line="${line}${all_c[i]}"; line_w=$((line_w + all_w[i]))
+  done
+  printf "%b" "${out}\n${line}"
+  exit 0
+fi
 
 # ancho común: con COLUMNS, todo el ancho de la terminal, como p10k (la línea ─ llega al borde derecho y las
 # píldoras de abajo se reparten a lo ancho). Sin COLUMNS, el mayor entre la línea 1 (con un ─ como mínimo) y la
@@ -353,7 +450,7 @@ gap_w=$((target - left_w - right_w))
 if [ "$term_w" -gt 0 ] && [ -n "$right" ] && [ $((left_w + gap_w + right_w)) -gt "$term_w" ]; then
   right="\n${right}"; gap_w=0
 fi
-gap=""; for ((i=0; i<gap_w; i++)); do gap="${gap}─"; done
+gap=""; for ((i=0; i<gap_w; i++)); do gap="${gap}${gap_char}"; done
 
 # arma cada fila de abajo alineada en columnas: la primera píldora a la izquierda, la última pegada a la
 # derecha y las del medio centradas en su fracción del ancho (con 3, en el centro). Así las filas con el mismo
@@ -398,7 +495,7 @@ for ((r=0; r<=rows; r++)); do
       sp=$((starts[k] - prev_end))
       if [ "$line3_row" -ge 0 ] && [ "$r" -ge "$line3_row" ]; then
         # en la línea 3 las píldoras se unen con una línea ─ gris, como la de la línea 1
-        dash=""; for ((d=0; d<sp; d++)); do dash="${dash}─"; done
+        dash=""; for ((d=0; d<sp; d++)); do dash="${dash}${gap_char}"; done
         row="${row}$(fgc 244)${dash}${R}"
       else
         row="${row}$(printf '%*s' "$sp" '')"
