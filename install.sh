@@ -173,7 +173,9 @@ if [ "$no_wizard" -eq 0 ] && [ "$has_tty" -eq 1 ]; then
 fi
 
 if [ "$wizard" -eq 1 ]; then
-  cols=$(tput cols 2>/dev/null </dev/tty || echo 100)
+  # ancho real de la terminal: tput dentro de $( ) no la ve y devuelve 80, stty sí
+  cols=$(stty size </dev/tty 2>/dev/null | cut -d' ' -f2)
+  case "$cols" in ""|*[!0-9]*|0) cols=${COLUMNS:-100} ;; esac
   now=$(date +%s)
   demo='{"model":{"display_name":"Opus 5.5"},"workspace":{"current_dir":"/demo/my-project"},"pr":{"number":42,"review_state":"approved"},"effort":{"level":"high"},"cost":{"total_cost_usd":3.72,"total_duration_ms":4980000,"total_lines_added":248,"total_lines_removed":61},"context_window":{"used_percentage":35},"prompt_cache":{"hit_ratio":0.91,"warm":true},"rate_limits":{"five_hour":{"used_percentage":43,"resets_at":'$((now + 8040))'},"seven_day":{"used_percentage":67,"resets_at":'$((now + 280000))'}}}'
 
@@ -238,7 +240,7 @@ if [ "$wizard" -eq 1 ]; then
     ask "y n"; [ "$answer" = restart ] && continue
     [ "$answer" = n ] && w_icons=none
 
-    choose preset "Choose a starting point" "p10k:Powerline, three lines (default)" "classic:Classic, one line" || continue
+    choose preset "Choose a starting point" "p10k:Powerline: project, usage and session on separate lines (default)" "classic:Classic: compact, pills one after another" || continue
     header "Customize it?"
     preview
     printf '\n(y) Yes, step by step\n(n) No, use this one\n'
@@ -247,7 +249,7 @@ if [ "$wizard" -eq 1 ]; then
       if [ "$w_icons" != none ]; then
         choose style "Pill ends" "round:Round" "angled:Angled" "flat:Flat" || continue
       fi
-      choose layout "Layout" "full:Full: project, usage and session on separate lines" "compact:Compact: everything in one line" || continue
+      choose layout "Layout" "full:Full: project, usage and session on separate lines" "compact:Compact: pills one after another, wrapping when they do not fit" || continue
       choose bar "Usage bars" "shade:Shaded" "line:Line" "block:Blocks" "none:No bar, only the percentage" || continue
       choose colors "Colors" "vivid:Vivid" "soft:Soft" || continue
       if [ "$w_layout" != compact ] && { [ -n "$w_layout" ] || [ "$w_preset" != classic ]; }; then
