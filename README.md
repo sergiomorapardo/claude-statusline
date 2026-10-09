@@ -30,6 +30,39 @@ Usage bars turn green, yellow, and red at 60% and 80%. Pills wrap to new lines a
 
 ## Install
 
+```bash
+curl -fsSL https://raw.githubusercontent.com/sergiomorapardo/claude-statusline/main/install.sh | bash
+```
+
+The installer copies the script to `~/.claude/statusline.sh` and adds the `statusLine` block to `~/.claude/settings.json`. The rest of your settings stay as they are. It backs up any file it changes, and you can run it again to update. If you already have another statusline, it stops without changing anything. Add `--force` to replace it:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/sergiomorapardo/claude-statusline/main/install.sh | bash -s -- --force
+```
+
+It respects `CLAUDE_CONFIG_DIR` and needs `jq` or `python3` to edit the settings.
+
+### Install with Claude Code
+
+Paste this into Claude Code:
+
+```text
+Install the statusline from https://github.com/sergiomorapardo/claude-statusline following its README.
+```
+
+### Instructions for agents
+
+If you are an AI agent installing this statusline for a user:
+
+1. Run `curl -fsSL https://raw.githubusercontent.com/sergiomorapardo/claude-statusline/main/install.sh | bash`.
+2. Check the exit code:
+   - `0`: installed. Tell the user to send a message or restart Claude Code to see it.
+   - `2`: the user already has another statusline. Nothing was changed. Show the user the command the installer printed and ask whether to replace it. Run again with `bash -s -- --force` only after the user says yes.
+   - `1`: show the error to the user. Do not edit `settings.json` by hand to work around it.
+3. Tell the user that the icons need a [Nerd Font](https://www.nerdfonts.com/) in their terminal. If they look like boxes or question marks, the terminal font is the cause.
+
+### Manual install
+
 Download the script:
 
 ```bash
