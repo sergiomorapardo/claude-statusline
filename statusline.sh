@@ -18,7 +18,7 @@ for key in preset icons style layout segments bar colors gap; do
   eval "value=\${CLAUDE_STATUSLINE_$(echo "$key" | tr '[:lower:]' '[:upper:]'):-}"
   [ -n "$value" ] && value=$(printf '%s' "$value" | tr -cd 'a-z0-9,') && eval "cfg_$key=\$value"
 done
-all_segments="project,rename,branch,pr,model,effort,context,today,week,time,lines,cost,cache"
+all_segments="project,rename,branch,pr,model,effort,context,today,week,time,tasks,lines,cost,cache"
 case "$cfg_preset" in
   classic) defaults="nerd flat compact project,model,context,today,week shade vivid none" ;;
   *)       defaults="nerd round full $all_segments shade vivid line" ;;
@@ -105,6 +105,25 @@ if [ -n "$transcript" ] && ! grep -q '"type":"custom-title"' "$transcript" 2>/de
   rename_hint="/rename"
 fi
 
+# lista de tareas de Claude (la de Ctrl+T). Con las herramientas Task* cada tarea es un JSON en
+# ~/.claude/tasks/<lista>/, donde la lista es CLAUDE_CODE_TASK_LIST_ID o el id de la sesión; con TodoWrite
+# (CLAUDE_CODE_ENABLE_TASKS=0) es un solo JSON en ~/.claude/todos/. Se cuentan los "status" de cada archivo
+claude_dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+session_id=$(val session_id)
+task_list="${CLAUDE_CODE_TASK_LIST_ID:-$session_id}"
+task_statuses=""
+if [ -n "$task_list" ] && [ -d "$claude_dir/tasks/$task_list" ]; then
+  # un status por archivo: el primero es el de la tarea (metadata puede traer otro "status")
+  task_statuses=$(for f in "$claude_dir/tasks/$task_list"/*.json; do
+    [ -f "$f" ] && grep -o '"status": *"[a-z_]*"' "$f" | head -1
+  done)
+elif [ -n "$session_id" ]; then
+  task_statuses=$(grep -o '"status": *"[a-z_]*"' "$claude_dir/todos/${session_id}-agent-${session_id}.json" 2>/dev/null)
+fi
+tasks_total=$(printf '%s\n' "$task_statuses" | grep -cE '"(pending|in_progress|completed)"')
+tasks_done=$(printf '%s\n' "$task_statuses" | grep -c '"completed"')
+tasks_active=$(printf '%s\n' "$task_statuses" | grep -c '"in_progress"')
+
 # duración legible: 45s, 23m, 1h 23m
 format_duration() {
   local s=$(( ${1%.*} / 1000 ))
@@ -156,6 +175,7 @@ show context || ctx_pct=""
 show today   || session_pct=""
 show week    || week_pct=""
 show time    || duration_ms=""
+show tasks   || tasks_total=0
 show lines   || { lines_added=""; lines_removed=""; }
 show cost    || cost_usd=""
 show cache   || cache_warm=""
@@ -317,13 +337,27 @@ today_w=0; [ -n "$session_pct" ] && today_w=${pill_w[${#pill_w[@]}-1]}
 # línea 3: la sesión actual, en tonos neutros para no confundirse con los límites
 new_row() { [ "${#pill_chain[@]}" -gt 0 ] && [ "$row_w" -gt 0 ] && rows=$((rows + 1)); row_w=0; }
 line3_row=-1
-if [ -n "$cost_usd" ] || [ -n "$duration_ms" ] || [ -n "$lines_added" ] || [ -n "$lines_removed" ] || [ -n "$cache_warm" ]; then
+if [ -n "$cost_usd" ] || [ -n "$duration_ms" ] || [ "$tasks_total" -gt 0 ] || [ -n "$lines_added" ] || [ -n "$lines_removed" ] || [ -n "$cache_warm" ]; then
   new_row
   line3_row=$rows
   # duración: icono en azul petróleo y valor en un azul más claro
   if [ -n "$duration_ms" ]; then
     nerd && seg 24 254 "󰔛"
     seg 31 254 "Time $(format_duration "$duration_ms")"
+    add_pill
+  fi
+  # tareas: cuántas faltan y cuántas van hechas, en ámbar; en verde cuando están todas
+  if [ "$tasks_total" -gt 0 ]; then
+    tasks_left=$((tasks_total - tasks_done))
+    if [ "$tasks_left" -eq 0 ]; then
+      nerd && seg "$(tone 28)" 254 ""
+      seg "$(tone 2)" 0 "Tasks ${tasks_done}/${tasks_total} ✔"
+    else
+      tasks_txt="Tasks ${tasks_left} left · ${tasks_done}/${tasks_total}"
+      [ "$tasks_active" -gt 0 ] && tasks_txt="${tasks_txt} ▶${tasks_active}"
+      nerd && seg 130 254 ""
+      seg 172 0 "$tasks_txt"
+    fi
     add_pill
   fi
   if [ -n "$lines_txt" ]; then
