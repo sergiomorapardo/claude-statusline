@@ -113,7 +113,10 @@ session_id=$(val session_id)
 task_list="${CLAUDE_CODE_TASK_LIST_ID:-$session_id}"
 task_statuses=""
 if [ -n "$task_list" ] && [ -d "$claude_dir/tasks/$task_list" ]; then
-  task_statuses=$(cat "$claude_dir/tasks/$task_list"/*.json 2>/dev/null | grep -o '"status": *"[a-z_]*"')
+  # un status por archivo: el primero es el de la tarea (metadata puede traer otro "status")
+  task_statuses=$(for f in "$claude_dir/tasks/$task_list"/*.json; do
+    [ -f "$f" ] && grep -o '"status": *"[a-z_]*"' "$f" | head -1
+  done)
 elif [ -n "$session_id" ]; then
   task_statuses=$(cat "$claude_dir/todos/$session_id"-agent-"$session_id".json 2>/dev/null | grep -o '"status": *"[a-z_]*"')
 fi
