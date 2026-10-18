@@ -118,7 +118,7 @@ if [ -n "$task_list" ] && [ -d "$claude_dir/tasks/$task_list" ]; then
     [ -f "$f" ] && grep -o '"status": *"[a-z_]*"' "$f" | head -1
   done)
 elif [ -n "$session_id" ]; then
-  task_statuses=$(cat "$claude_dir/todos/$session_id"-agent-"$session_id".json 2>/dev/null | grep -o '"status": *"[a-z_]*"')
+  task_statuses=$(grep -o '"status": *"[a-z_]*"' "$claude_dir/todos/${session_id}-agent-${session_id}.json" 2>/dev/null)
 fi
 tasks_total=$(printf '%s\n' "$task_statuses" | grep -cE '"(pending|in_progress|completed)"')
 tasks_done=$(printf '%s\n' "$task_statuses" | grep -c '"completed"')
