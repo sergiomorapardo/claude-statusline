@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    # Preserve tool failures through tee in advisory report steps.
+    shell: bash
+
+jobs:
+  tests:
+    # macOS runs the scripts with /bin/bash 3.2, the bash Claude Code users on a Mac get by default.
+    name: tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - name: Check out code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run smoke tests
+        run: |
+          if [ "$RUNNER_OS" = macOS ]; then /bin/bash tests/run.sh; else bash tests/run.sh; fi
+
+  shellcheck:
+    name: shellcheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check for shell errors
+        run: shellcheck --version && shellcheck --severity=error statusline.sh install.sh tests/run.sh
+
+      # Transitional report: make warnings blocking after a cleaning PR.
+      - name: Report shell warnings
+        id: warnings
+        continue-on-error: true
+        run: shellcheck --severity=warning statusline.sh install.sh tests/run.sh 2>&1 | tee shellcheck.txt
+
+      - name: Publish report status
+        if: always()
+        env:
+          WARNINGS_OUTCOME: ${{ steps.warnings.outcome }}
+        run: |
+          {
+            echo '## ShellCheck'
+            echo 'Errors block the PR. Warnings are advisory until a cleaning PR resolves the existing findings.'
+            echo
+            echo "| Check | Outcome |"
+            echo "| --- | --- |"
+            echo "| Warnings | $WARNINGS_OUTCOME |"
+            echo
+            if [ -s shellcheck.txt ]; then
+              echo '```'
+              cat shellcheck.txt
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
