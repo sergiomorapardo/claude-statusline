@@ -57,6 +57,31 @@ printf 'preset=$(touch %s)\nstyle=`touch %s`\n' "$work/pwned" "$work/pwned" > "$
 printf '%s' "$payload" | CLAUDE_STATUSLINE_CONFIG="$work/evil.conf" "$sh_bin" "$root/statusline.sh" >/dev/null 2>&1
 [ -e "$work/pwned" ] && fail "statusline.conf is never executed" || pass "statusline.conf is never executed"
 
+echo "Tasks"
+tasks="$work/claude/tasks/s1"
+mkdir -p "$tasks"
+out=$(render "$payload")
+absent "no task files, no pill" "$out" "Tasks"
+printf '{"id":"1","status": "completed"}' > "$tasks/1.json"
+printf '{"id":"2","status": "in_progress"}' > "$tasks/2.json"
+printf '{\n  "id": "3",\n  "status": "pending",\n  "metadata": {\n    "status": "completed"\n  }\n}' > "$tasks/3.json"
+: > "$tasks/.lock"
+out=$(render "$payload")
+contains "counts left, done and in progress" "$out" "Tasks 2 left · 1/3 ▶1"
+for f in 2 3; do printf '{"id":"%s","status":"completed"}' "$f" > "$tasks/$f.json"; done
+out=$(render "$payload")
+contains "all done" "$out" "Tasks 3/3 ✔"
+out=$(render "$payload" CLAUDE_STATUSLINE_SEGMENTS=project,model,time)
+absent "hidden when the segment is off" "$out" "Tasks"
+mkdir -p "$work/claude/tasks/shared"
+printf '{"id":"1","status":"pending"}' > "$work/claude/tasks/shared/1.json"
+out=$(render "$payload" CLAUDE_CODE_TASK_LIST_ID=shared)
+contains "follows CLAUDE_CODE_TASK_LIST_ID" "$out" "Tasks 1 left · 0/1"
+mkdir -p "$work/claude/todos"
+printf '[{"content":"a","status":"completed"},{"content":"b","status":"pending"}]' > "$work/claude/todos/s2-agent-s2.json"
+out=$(render "${payload/\"s1\"/\"s2\"}")
+contains "reads TodoWrite lists" "$out" "Tasks 1 left · 1/2"
+
 echo "Install"
 # install <carpeta> [flags]: instala desde este checkout, sin preguntas
 install() {
@@ -68,7 +93,16 @@ setting() { python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(e
 dir="$work/i1"; mkdir -p "$dir"; printf '{"theme":"dark","env":{"FOO":"1"}}' > "$dir/settings.json"
 if install "$dir"; then pass "installs into an existing settings.json"; else fail "installs into an existing settings.json" "$(cat "$work/install.log")"; fi
 [ "$(setting "$dir/settings.json" 'd["statusLine"]["command"]')" = "bash $dir/statusline.sh" ] && pass "registers the command" || fail "registers the command"
+[ "$(setting "$dir/settings.json" 'd["env"]["CLAUDE_CODE_ENABLE_TODO_TOOLS"]')" = 1 ] && pass "turns on the task tools" || fail "turns on the task tools"
 [ "$(setting "$dir/settings.json" 'd["env"]["FOO"] + d["theme"]')" = 1dark ] && pass "keeps other settings" || fail "keeps other settings"
+
+dir="$work/i2"; mkdir -p "$dir"; printf '{"env":{"CLAUDE_CODE_ENABLE_TODO_TOOLS":"0"}}' > "$dir/settings.json"
+install "$dir"
+[ "$(setting "$dir/settings.json" 'd["env"]["CLAUDE_CODE_ENABLE_TODO_TOOLS"]')" = 0 ] && pass "keeps a value the user set" || fail "keeps a value the user set"
+
+dir="$work/i3"; mkdir -p "$dir"
+install "$dir" --no-task-tools
+[ "$(setting "$dir/settings.json" '"env" in d')" = False ] && pass "--no-task-tools leaves env alone" || fail "--no-task-tools leaves env alone"
 
 dir="$work/i4"; mkdir -p "$dir"; printf '{"statusLine":{"type":"command","command":"other.sh"}}' > "$dir/settings.json"
 install "$dir"; rc=$?
@@ -86,7 +120,7 @@ for d in "${path_dirs[@]}"; do
 done 2>/dev/null
 PATH="$nojq" command -v jq >/dev/null && fail "jq is hidden from PATH" || pass "jq is hidden from PATH"
 dir="$work/i5"; mkdir -p "$dir"; printf '{"env":{"FOO":"1"}}' > "$dir/settings.json"
-if PATH="$nojq" install "$dir" && [ "$(setting "$dir/settings.json" 'd["env"]["FOO"] + d["statusLine"]["type"]')" = 1command ]; then
+if PATH="$nojq" install "$dir" && [ "$(setting "$dir/settings.json" 'd["env"]["CLAUDE_CODE_ENABLE_TODO_TOOLS"] + d["env"]["FOO"]')" = 11 ]; then
   pass "works with python3 when jq is missing"
 else
   fail "works with python3 when jq is missing" "$(cat "$work/install.log")"

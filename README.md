@@ -17,6 +17,7 @@ A Powerlevel10k-style statusline for [Claude Code](https://code.claude.com): rou
 | 2 | Today | 5-hour usage limit and time until it resets. |
 | 2 | Week | 7-day usage limit and time until it resets. |
 | 3 | Time | Session duration. |
+| 3 | Tasks | Claude's task list (the one `Ctrl+T` toggles): tasks left, done out of total, and `▶` in progress. Green with `✔` when all are done. Hidden while there are no tasks. |
 | 3 | Lines | Lines added and removed in the session, as a proportional bar, plus files changed in the repo. |
 | 3 | Cost · Cache | Estimated session cost in USD and prompt-cache hit ratio. Grey with `󰜗` when the cache has gone cold. |
 
@@ -44,7 +45,7 @@ Every option can be changed on top of a preset. Two examples:
 | `--icons` | `nerd`, `none` (without a Nerd Font; forces `flat`) | `nerd` |
 | `--style` | `round`, `angled`, `flat` | `round` |
 | `--layout` | `full` (three lines), `compact` (one line, wraps when it does not fit) | `full` |
-| `--segments` | `all` or a comma-separated list of `project`, `rename`, `branch`, `pr`, `model`, `effort`, `context`, `today`, `week`, `time`, `lines`, `cost`, `cache` | `all` |
+| `--segments` | `all` or a comma-separated list of `project`, `rename`, `branch`, `pr`, `model`, `effort`, `context`, `today`, `week`, `time`, `tasks`, `lines`, `cost`, `cache` | `all` |
 | `--bar` | `shade` (`▒░`), `line` (`━─`), `block` (`■□`), `none` | `shade` |
 | `--colors` | `vivid`, `soft` | `vivid` |
 | `--gap` | `line` (`───` between pills), `none` | `line` |
@@ -56,6 +57,7 @@ The installer saves your choices to `~/.claude/statusline.conf`, one `key=value`
 - A [Nerd Font](https://www.nerdfonts.com/) in your terminal (for example, MesloLGS NF, the font Powerlevel10k recommends). Without one, choose `--icons none`.
 - Bash, git, and awk (preinstalled on macOS and Linux).
 - A recent version of Claude Code. Segments whose data the payload does not include are hidden.
+- For the Tasks pill, Claude needs its task tools. Claude Code only provides them by default on older models (Opus 4.7, Sonnet 4.6, Haiku 4.5 and earlier), so the installer sets `CLAUDE_CODE_ENABLE_TODO_TOOLS=1` in the `env` of `settings.json` (it keeps any value you already have there). Pass `--no-task-tools` to skip it. See [Task list](https://code.claude.com/docs/en/interactive-mode#task-list).
 
 ## Install
 
@@ -75,7 +77,7 @@ To skip the questions, pass the options as flags. Options you leave out keep the
 curl -fsSL https://raw.githubusercontent.com/sergiomorapardo/claude-statusline/main/install.sh | bash -s -- --preset classic --colors soft
 ```
 
-The installer copies the script to `~/.claude/statusline.sh` and adds the `statusLine` block to `~/.claude/settings.json`. The rest of your settings stay as they are. It backs up any file it changes, and you can run it again to update. If you already have another statusline, it stops without changing anything. Add `--force` to replace it.
+The installer copies the script to `~/.claude/statusline.sh` and adds the `statusLine` block (and `CLAUDE_CODE_ENABLE_TODO_TOOLS=1`, for the Tasks pill) to `~/.claude/settings.json`. The rest of your settings stay as they are. It backs up any file it changes, and you can run it again to update. If you already have another statusline, it stops without changing anything. Add `--force` to replace it.
 
 It respects `CLAUDE_CONFIG_DIR` and needs `jq` or `python3` to edit the settings. `--help` lists every option.
 

@@ -27,6 +27,7 @@ Usage: install.sh [options]
   --force                Replace another statusline that is already configured
   --configure            Ask the style questions again (needs a terminal)
   --no-wizard            Never ask questions; use the flags and the saved configuration
+  --no-task-tools        Do not turn on Claude's task list (CLAUDE_CODE_ENABLE_TODO_TOOLS=1 in settings.json)
 
 Style (saved to statusline.conf; options you leave out keep their saved value):
   --preset   p10k | classic
@@ -34,7 +35,7 @@ Style (saved to statusline.conf; options you leave out keep their saved value):
   --style    round | angled | flat
   --layout   full | compact
   --segments all | comma-separated list of:
-             project,rename,branch,pr,model,effort,context,today,week,time,lines,cost,cache
+             project,rename,branch,pr,model,effort,context,today,week,time,tasks,lines,cost,cache
   --bar      shade | line | block | none
   --colors   vivid | soft
   --gap      line | none
@@ -45,7 +46,7 @@ fail() { printf 'Error: %s\n' "$*" >&2; exit 1; }
 
 # valores permitidos de cada opción de estilo
 KEYS="preset icons style layout segments bar colors gap"
-SEGMENTS="project rename branch pr model effort context today week time lines cost cache"
+SEGMENTS="project rename branch pr model effort context today week time tasks lines cost cache"
 allowed() {
   case "$1" in
     preset) echo "p10k classic" ;;  icons) echo "nerd none" ;;       style) echo "round angled flat" ;;
@@ -67,7 +68,7 @@ valid() {
   return 1
 }
 
-force=0; configure=0; no_wizard=0; flags=0
+force=0; configure=0; no_wizard=0; flags=0; task_tools=1
 for key in $KEYS; do eval "opt_$key=''"; done
 while [ $# -gt 0 ]; do
   arg=$1; value=""
@@ -76,6 +77,7 @@ while [ $# -gt 0 ]; do
     --force) force=1 ;;
     --configure) configure=1 ;;
     --no-wizard) no_wizard=1 ;;
+    --no-task-tools) task_tools=0 ;;
     -h|--help) usage; exit 0 ;;
     --preset|--icons|--style|--layout|--segments|--bar|--colors|--gap)
       key=${arg#--}
@@ -333,18 +335,23 @@ fi
 new=$(mktemp)
 if [ "$json" = jq ]; then
   { [ -s "$SETTINGS" ] && cat "$SETTINGS" || echo '{}'; } \
-    | jq --arg cmd "$COMMAND" '.statusLine = {type: "command", command: $cmd, padding: 0, refreshInterval: 2}' > "$new"
+    | jq --arg cmd "$COMMAND" --argjson tasks "$task_tools" '.statusLine = {type: "command", command: $cmd, padding: 0, refreshInterval: 2}
+        | if $tasks == 1 then .env.CLAUDE_CODE_ENABLE_TODO_TOOLS = (.env.CLAUDE_CODE_ENABLE_TODO_TOOLS // "1") else . end' > "$new"
 else
-  python3 - "$SETTINGS" "$COMMAND" > "$new" <<'PY'
+  python3 - "$SETTINGS" "$COMMAND" "$task_tools" > "$new" <<'PY'
 import json, os, sys
-path, cmd = sys.argv[1], sys.argv[2]
+path, cmd, tasks = sys.argv[1], sys.argv[2], sys.argv[3]
 data = json.load(open(path)) if os.path.exists(path) and os.path.getsize(path) else {}
 data["statusLine"] = {"type": "command", "command": cmd, "padding": 0, "refreshInterval": 2}
+# lista de tareas (Ctrl+T) en todos los modelos; si el usuario ya la configuró, se respeta
+if tasks == "1":
+    data.setdefault("env", {}).setdefault("CLAUDE_CODE_ENABLE_TODO_TOOLS", "1")
 print(json.dumps(data, indent=2, ensure_ascii=False))
 PY
 fi
 mv "$new" "$SETTINGS"
 info "Registered the statusline in $SETTINGS"
+[ "$task_tools" -eq 1 ] && info "Turned on Claude's task list on every model (CLAUDE_CODE_ENABLE_TODO_TOOLS=1)"
 
 # 7. comprobar que el script corre con un payload mínimo
 if printf '{"model":{"display_name":"Claude"},"workspace":{"current_dir":"%s"}}' "$PWD" | bash "$TARGET" >/dev/null 2>&1; then
