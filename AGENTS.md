@@ -43,6 +43,7 @@
 - Integrate pull requests exclusively with squash merge. Do not use merge commits or rebase merge.
 - Every squash commit on the default branch must end with its pull request reference, ` (#<number>)`, so the branch that produced it stays traceable from `git log`.
 - Never pass `--subject` or `--body` to `gh pr merge --squash`. GitHub appends ` (#<number>)` only when it builds the subject from the pull request title; an explicit subject silently drops it.
+- Before merging, check that the repository builds squash subjects from the pull request title: `gh api repos/{owner}/{repo} -q .squash_merge_commit_title` must print `PR_TITLE`. With `COMMIT_OR_PR_TITLE`, a pull request with a single commit takes that commit's message as the subject instead of the pull request title, so the ` (#<number>)` suffix is not guaranteed. Changing the setting needs the user's approval: `gh api -X PATCH repos/{owner}/{repo} -f squash_merge_commit_title=PR_TITLE -f squash_merge_commit_message=COMMIT_MESSAGES`.
 - If the pull request title is not the message you want on the default branch, correct it with `gh pr edit --title` before merging, then merge without overriding the subject.
 - Merge only after required checks and approvals pass and all conflicts and actionable review comments are resolved.
 - After merging, verify that the new commit on the default branch carries its ` (#<number>)` suffix. Repairing a missing one means rewriting published history, which needs explicit authorization.
